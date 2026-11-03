@@ -1,0 +1,35 @@
+{
+  "id": "/",
+  "name": "sitechecker",
+  "short_name": "sitechecker",
+  "description": "Passive website security baseline check with A–F grade and nginx/Apache fixes.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/en/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#17110c",
+  "theme_color": "#17110c",
+  "categories": ["utilities", "security"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

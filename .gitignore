@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/postgres/
+data/redis/
+.env
+*.exe
+backend/sitechecker-api
+backend/sitechecker-worker
