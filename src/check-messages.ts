@@ -3,7 +3,7 @@ import { localeNames } from "./site-config";
 
 type Copy = Partial<Record<Locale, string>> & { en: string };
 
-const checks: Record<string, { title: Copy; danger: Copy }> = {
+const checks: Record<string, { title: Copy; danger: Copy; fix?: Copy }> = {
   H1: {
     title: {
       en: "HSTS is missing or too weak",
@@ -153,6 +153,10 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
       en: "Session cookies without Secure can be sent over plain HTTP and stolen.",
       ru: "Сессионные cookie без Secure могут уйти по обычному HTTP и быть украдены.",
     },
+    fix: {
+      en: "Mark session cookies Secure in the application cookie API when serving over HTTPS.",
+      ru: "В приложении пометьте сессионные cookie флагом Secure, если сайт отдаётся по HTTPS.",
+    },
   },
   C2: {
     title: {
@@ -163,6 +167,10 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
       en: "Without HttpOnly any XSS script can read session cookies from document.cookie.",
       ru: "Без HttpOnly любой XSS-скрипт может прочитать сессию через document.cookie.",
     },
+    fix: {
+      en: "Mark session cookies HttpOnly in the application cookie API.",
+      ru: "В приложении пометьте сессионные cookie флагом HttpOnly.",
+    },
   },
   C3: {
     title: {
@@ -172,6 +180,10 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
     danger: {
       en: "Missing SameSite makes cross-site request forgery (CSRF) easier.",
       ru: "Без SameSite проще провести CSRF — чужой сайт отправит запрос от имени пользователя.",
+    },
+    fix: {
+      en: "Add SameSite=Lax (or Strict) to cookies that do not need cross-site POSTs.",
+      ru: "Добавьте SameSite=Lax (или Strict) cookie, которым не нужен cross-site POST.",
     },
   },
   C4: {
@@ -184,6 +196,90 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
       ru: "Префиксы вроде __Host- жёстче привязывают cookie к безопасному origin — дополнительное усиление.",
     },
   },
+  F1: {
+    title: {
+      en: "Git repository is publicly readable",
+      ru: "Репозиторий .git открыт снаружи",
+    },
+    danger: {
+      en: "Anyone can download source, history and sometimes secrets from an exposed .git tree.",
+      ru: "Из открытого .git можно скачать исходники, историю и иногда секреты.",
+    },
+    fix: {
+      en: "Remove .git from the public document root; keep repositories outside the web tree.",
+      ru: "Уберите .git из публичного document root; репозиторий держите вне веб-дерева.",
+    },
+  },
+  F2: {
+    title: {
+      en: "Environment or config backups are reachable",
+      ru: "Доступны бэкапы окружения или конфигов",
+    },
+    danger: {
+      en: "Files like .env or wp-config.php.bak often contain database passwords and API keys.",
+      ru: "В .env или wp-config.php.bak часто лежат пароли БД и ключи API.",
+    },
+    fix: {
+      en: "Delete backup copies of secrets from the public tree; rotate any credentials that were exposed.",
+      ru: "Удалите бэкапы секретов из публичного дерева и смените всё, что могло утечь.",
+    },
+  },
+  F3: {
+    title: {
+      en: "Backup archives or SQL dumps are public",
+      ru: "Публично лежат архивы или SQL-дампы",
+    },
+    danger: {
+      en: "Downloadable dumps expose customer data and credentials in one click.",
+      ru: "Скачиваемый дамп отдаёт данные клиентов и учётные данные одним кликом.",
+    },
+    fix: {
+      en: "Remove database dumps and archives from publicly reachable directories.",
+      ru: "Уберите дампы БД и архивы из каталогов, доступных из интернета.",
+    },
+  },
+  F4: {
+    title: {
+      en: "Diagnostic pages are exposed",
+      ru: "Открыты диагностические страницы",
+    },
+    danger: {
+      en: "phpinfo and server-status leak versions, paths and configuration details useful for attacks.",
+      ru: "phpinfo и server-status светят версии, пути и настройки, удобные для атаки.",
+    },
+    fix: {
+      en: "Remove diagnostic scripts and restrict Apache/nginx status handlers to localhost.",
+      ru: "Удалите phpinfo и ограничьте status-handlers nginx/Apache только localhost.",
+    },
+  },
+  F5: {
+    title: {
+      en: "Directory listing is enabled",
+      ru: "Включён листинг каталогов",
+    },
+    danger: {
+      en: "Browsable folders reveal file names, backups and forgotten scripts.",
+      ru: "Открытый Index of показывает имена файлов, бэкапы и забытые скрипты.",
+    },
+    fix: {
+      en: "Turn off autoindex / Options Indexes on the web server.",
+      ru: "Выключите autoindex / Options Indexes на веб-сервере.",
+    },
+  },
+  F6: {
+    title: {
+      en: "Database admin panels look public",
+      ru: "Похоже, открыты панели управления БД",
+    },
+    danger: {
+      en: "phpMyAdmin or Adminer on the public Internet are a common takeover path.",
+      ru: "phpMyAdmin или Adminer в открытом интернете — частый путь к захвату сайта.",
+    },
+    fix: {
+      en: "Remove public DB admin tools or put them behind VPN, basic auth, and IP allowlists.",
+      ru: "Уберите публичные панели БД или закройте их VPN, basic auth и allowlist по IP.",
+    },
+  },
   F7: {
     title: {
       en: "security.txt is missing",
@@ -192,6 +288,10 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
     danger: {
       en: "Researchers have no clear place to report vulnerabilities (RFC 9116).",
       ru: "Исследователям некуда официально сообщить о находке (RFC 9116).",
+    },
+    fix: {
+      en: "Publish /.well-known/security.txt with Contact and Expires fields (RFC 9116).",
+      ru: "Опубликуйте /.well-known/security.txt с полями Contact и Expires (RFC 9116).",
     },
   },
   S1: {
@@ -240,8 +340,24 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
       ru: "SPF отсутствует или небезопасен",
     },
     danger: {
-      en: "Without a proper SPF record anyone can more easily send mail that looks like yours.",
-      ru: "Без нормального SPF проще слать письма якобы от вашего домена.",
+      en: "SPF lists which servers may send mail as your domain. Without it (or with +all), attackers can forge password-reset and invoice emails that look like they come from the same domain as your website — users trust that name.",
+      ru: "SPF задаёт, каким серверам можно слать почту от вашего домена. Без записи или с +all проще подделать «сброс пароля» и счета с того же домена, что у сайта — люди доверяют этому имени.",
+    },
+    fix: {
+      en: "Add a TXT SPF record on {domain}, e.g. v=spf1 -all (avoid +all). If you send mail, use your provider include and end with -all.",
+      ru: "Добавьте TXT SPF на {domain}, например: v=spf1 -all (без +all). Если шлёте почту — include провайдера и в конце -all.",
+      de: "TXT-SPF für {domain} setzen, z. B. v=spf1 -all (kein +all). Bei Versand: include des Providers und -all am Ende.",
+      fr: "Ajoutez un TXT SPF sur {domain}, p.ex. v=spf1 -all (évitez +all). Si vous envoyez du mail : include du fournisseur puis -all.",
+      es: "Añada un TXT SPF en {domain}, p. ej. v=spf1 -all (evite +all). Si envía correo: include del proveedor y -all al final.",
+      zh: "在 {domain} 添加 TXT SPF，例如 v=spf1 -all（不要用 +all）。若发信：用服务商 include，并以 -all 结尾。",
+      ja: "{domain} に TXT SPF を追加（例: v=spf1 -all、+all は不可）。送信する場合はプロバイダの include と末尾 -all。",
+      ko: "{domain}에 TXT SPF를 추가하세요. 예: v=spf1 -all(+all 금지). 메일을 보내면 제공자 include와 끝의 -all.",
+      pt: "Adicione TXT SPF em {domain}, ex.: v=spf1 -all (evite +all). Se enviar correio: include do fornecedor e -all no fim.",
+      it: "Aggiungi TXT SPF su {domain}, es. v=spf1 -all (niente +all). Se invii posta: include del provider e -all in coda.",
+      tr: "{domain} için TXT SPF ekleyin, örn. v=spf1 -all (+all kullanmayın). Posta gönderiyorsanız sağlayıcı include ve sonda -all.",
+      ar: "أضف سجل TXT لـ SPF على {domain} مثل v=spf1 -all (تجنب +all). إن أرسلت بريداً: include للمزوّد ثم -all.",
+      hi: "{domain} पर TXT SPF जोड़ें, जैसे v=spf1 -all (+all न रखें)। मेल भेजते हों तो प्रदाता include और अंत में -all।",
+      fa: "روی {domain} رکورد TXT SPF بگذارید، مثلاً v=spf1 -all (بدون +all). اگر نامه می‌فرستید include سرویس‌دهنده و در پایان -all.",
     },
   },
   D2: {
@@ -250,8 +366,8 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
       ru: "Селекторы DKIM не найдены",
     },
     danger: {
-      en: "DKIM signs outbound mail; missing selectors may mean signing is not set up (or uses uncommon names).",
-      ru: "DKIM подписывает исходящую почту; нет селекторов — подпись, скорее всего, не настроена.",
+      en: "DKIM signs outbound mail so receivers can tell it really came from you. Without a signature, phishing that abuses your brand (the same domain users see on the site) is harder to filter — login alerts and resets look less trustworthy.",
+      ru: "DKIM подписывает исходящую почту, чтобы получатель видел: письмо действительно ваше. Без подписи фишинг под бренд сайта (тот же домен) сложнее отсеять — «вход» и «сброс пароля» перестают быть надёжным сигналом.",
     },
   },
   D3: {
@@ -260,8 +376,24 @@ const checks: Record<string, { title: Copy; danger: Copy }> = {
       ru: "DMARC отсутствует или слишком мягкий",
     },
     danger: {
-      en: "Without DMARC policy receivers do not know whether to reject forged mail from your domain.",
-      ru: "Без политики DMARC получатели не знают, отклонять ли поддельные письма с вашего домена.",
+      en: "DMARC tells mail providers what to do when SPF/DKIM fail. Without p=quarantine or p=reject, forged mail from your domain still reaches inboxes — phishing against site users and brand reputation, not “just email hygiene”.",
+      ru: "DMARC говорит почтовым сервисам, что делать, если SPF/DKIM не сошлись. Без p=quarantine или p=reject поддельные письма с вашего домена всё ещё доходят — это фишинг пользователей сайта и удар по бренду, а не «просто почтовая гигиена».",
+    },
+    fix: {
+      en: "Add a TXT record on _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      ru: "Добавьте TXT на _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      de: "TXT auf _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      fr: "Ajoutez un TXT sur _dmarc.{domain} : v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      es: "Añada TXT en _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      zh: "在 _dmarc.{domain} 添加 TXT：v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      ja: "_dmarc.{domain} に TXT を追加：v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      ko: "_dmarc.{domain}에 TXT 추가: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      pt: "Adicione TXT em _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      it: "Aggiungi TXT su _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      tr: "_dmarc.{domain} için TXT: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      ar: "أضف TXT على _dmarc.{domain}: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      hi: "_dmarc.{domain} पर TXT जोड़ें: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
+      fa: "روی _dmarc.{domain} رکورد TXT بگذارید: v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}",
     },
   },
   D4: {
@@ -306,4 +438,17 @@ export function checkDanger(locale: Locale, id: string): string {
   const row = checks[id];
   if (!row) return "";
   return localeNames(row.danger)[locale] || row.danger.en;
+}
+
+const dnsFixIds = new Set(["D1", "D3"]);
+
+export function isDnsFix(id: string): boolean {
+  return dnsFixIds.has(id);
+}
+
+export function checkFix(locale: Locale, id: string, domain: string): string {
+  const row = checks[id];
+  if (!row?.fix) return "";
+  const host = domain.trim() || "example.com";
+  return (localeNames(row.fix)[locale] || row.fix.en).split("{domain}").join(host);
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -85,6 +86,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_log (created_at);
+
+CREATE TABLE IF NOT EXISTS verifications (
+  id TEXT PRIMARY KEY,
+  domain TEXT NOT NULL,
+  method TEXT NOT NULL,
+  token TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'host',
+  status TEXT NOT NULL DEFAULT 'pending',
+  token_expires TIMESTAMPTZ NOT NULL,
+  verified_until TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS verifications_domain_idx ON verifications (domain, created_at DESC);
+CREATE INDEX IF NOT EXISTS verifications_verified_idx ON verifications (domain, verified_until);
 `)
 	return err
 }
@@ -138,7 +153,20 @@ FROM checks WHERE id=$1 AND expires_at > now()`, id)
 	_ = json.Unmarshal(top, &rec.TopFixes)
 	rec.FinishedAt = finished
 	rec.Disclaimer = "This report covers passive baseline checks only and does not mean the site is secure."
+	rec.ApplyFreshness(time.Now().UTC())
 	return &rec, nil
+}
+
+func (s *Store) ResetCheckForRescan(ctx context.Context, rec *domain.CheckRecord) error {
+	progress, _ := json.Marshal(rec.Progress)
+	expires := time.Now().UTC().Add(30 * 24 * time.Hour)
+	_, err := s.DB.Exec(ctx, `
+UPDATE checks SET state=$2, level=$3, score=0, grade='', duration_ms=0, progress=$4,
+  findings='[]'::jsonb, top_fixes='[]'::jsonb, error='', finished_at=NULL, expires_at=$5
+WHERE id=$1`,
+		rec.ID, domain.CheckQueued, rec.Level, progress, expires,
+	)
+	return err
 }
 
 func (s *Store) Enqueue(ctx context.Context, job domain.CheckJob) error {
@@ -246,5 +274,95 @@ func (s *Store) Cleanup(ctx context.Context) error {
 		return err
 	}
 	_, err = s.DB.Exec(ctx, `DELETE FROM audit_log WHERE created_at < now() - interval '180 days'`)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(ctx, `DELETE FROM verifications WHERE token_expires < now() AND (verified_until IS NULL OR verified_until < now())`)
 	return err
+}
+
+func (s *Store) CreateVerification(ctx context.Context, v *domain.Verification) error {
+	_, err := s.DB.Exec(ctx, `
+INSERT INTO verifications (id, domain, method, token, scope, status, token_expires, verified_until, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		v.ID, v.Domain, v.Method, v.Token, v.Scope, v.Status, v.TokenExpires, v.VerifiedUntil, v.CreatedAt,
+	)
+	return err
+}
+
+func (s *Store) GetVerification(ctx context.Context, id string) (*domain.Verification, error) {
+	row := s.DB.QueryRow(ctx, `
+SELECT id, domain, method, token, scope, status, token_expires, verified_until, created_at
+FROM verifications WHERE id=$1`, id)
+	var v domain.Verification
+	var until *time.Time
+	err := row.Scan(&v.ID, &v.Domain, &v.Method, &v.Token, &v.Scope, &v.Status, &v.TokenExpires, &until, &v.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	v.VerifiedUntil = until
+	return &v, nil
+}
+
+func (s *Store) MarkVerified(ctx context.Context, id string, until time.Time) error {
+	_, err := s.DB.Exec(ctx, `
+UPDATE verifications SET status='verified', verified_until=$2 WHERE id=$1`, id, until)
+	return err
+}
+
+func (s *Store) IsDomainVerified(ctx context.Context, host string) (bool, error) {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	rows, err := s.DB.Query(ctx, `
+SELECT domain, scope FROM verifications
+WHERE status='verified' AND verified_until > now()`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domainName, scope string
+		if err := rows.Scan(&domainName, &scope); err != nil {
+			return false, err
+		}
+		domainName = strings.ToLower(strings.TrimSuffix(domainName, "."))
+		if scope == "domain" {
+			if host == domainName || strings.HasSuffix(host, "."+domainName) {
+				return true, nil
+			}
+		} else if host == domainName {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) VerificationStatus(ctx context.Context, host string) (verified bool, until *time.Time, err error) {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	rows, err := s.DB.Query(ctx, `
+SELECT domain, scope, verified_until FROM verifications
+WHERE status='verified' AND verified_until > now()
+ORDER BY verified_until DESC`)
+	if err != nil {
+		return false, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domainName, scope string
+		var vu time.Time
+		if err := rows.Scan(&domainName, &scope, &vu); err != nil {
+			return false, nil, err
+		}
+		domainName = strings.ToLower(strings.TrimSuffix(domainName, "."))
+		ok := false
+		if scope == "domain" {
+			ok = host == domainName || strings.HasSuffix(host, "."+domainName)
+		} else {
+			ok = host == domainName
+		}
+		if ok {
+			t := vu
+			return true, &t, nil
+		}
+	}
+	return false, nil, rows.Err()
 }

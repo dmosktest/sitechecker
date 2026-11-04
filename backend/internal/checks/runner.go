@@ -25,12 +25,19 @@ func NewRunner() *Runner {
 	return &Runner{Client: ssrf.NewClient()}
 }
 
-func (r *Runner) Run(ctx context.Context, domainName string, onEvent EventFunc) ([]dom.Finding, []dom.GroupProgress, error) {
+func (r *Runner) Run(ctx context.Context, domainName string, level int, onEvent EventFunc) ([]dom.Finding, []dom.GroupProgress, error) {
+	if level < 1 {
+		level = 1
+	}
+	filesTotal := 1
+	if level >= 2 {
+		filesTotal = 7
+	}
 	groups := []dom.GroupProgress{
 		{ID: dom.GroupHeaders, State: "pending", Total: 8},
 		{ID: dom.GroupTLS, State: "pending", Total: 6},
 		{ID: dom.GroupCookie, State: "pending", Total: 4},
-		{ID: dom.GroupFiles, State: "pending", Total: 1},
+		{ID: dom.GroupFiles, State: "pending", Total: filesTotal},
 		{ID: dom.GroupSoft, State: "pending", Total: 4},
 		{ID: dom.GroupDNS, State: "pending", Total: 6},
 	}
@@ -62,8 +69,12 @@ func (r *Runner) Run(ctx context.Context, domainName string, onEvent EventFunc) 
 		httpRes  *ssrf.Response
 	)
 	add := func(f dom.Finding) {
-		if f.Fixes.Nginx == "" && f.Fixes.Apache == "" && f.Fixes.Other == "" {
-			f.Fixes = fixes.For(f.ID)
+		if f.Fixes.Nginx == "" && f.Fixes.Apache == "" && f.Fixes.Other == "" &&
+			f.Fixes.Cloudflare == "" && f.Fixes.WordPress == "" &&
+			f.Fixes.Htaccess == "" && f.Fixes.Traefik == "" && f.Fixes.Caddy == "" {
+			f.Fixes = fixes.For(f.ID, domainName)
+		} else {
+			f.Fixes = fixes.ApplyHost(f.Fixes, domainName)
 		}
 		mu.Lock()
 		findings = append(findings, f)
@@ -82,7 +93,7 @@ func (r *Runner) Run(ctx context.Context, domainName string, onEvent EventFunc) 
 			return nil, groups, err
 		}
 	}
-	httpRes, _ = r.Client.Fetch(ctx, httpURL)
+	httpRes, _ = r.Client.FetchNoFollow(ctx, httpURL)
 
 	hdr := httpsRes.Header
 	pageURL := httpsRes.URL
@@ -131,8 +142,30 @@ func (r *Runner) Run(ctx context.Context, domainName string, onEvent EventFunc) 
 	setGroup(dom.GroupCookie, "done", 4)
 
 	setGroup(dom.GroupFiles, "running", 0)
+	doneFiles := 0
+	if level >= 2 {
+		add(checkF1(ctx, r.Client, domainName))
+		doneFiles++
+		setGroup(dom.GroupFiles, "running", doneFiles)
+		add(checkF2(ctx, r.Client, domainName))
+		doneFiles++
+		setGroup(dom.GroupFiles, "running", doneFiles)
+		add(checkF3(ctx, r.Client, domainName))
+		doneFiles++
+		setGroup(dom.GroupFiles, "running", doneFiles)
+		add(checkF4(ctx, r.Client, domainName))
+		doneFiles++
+		setGroup(dom.GroupFiles, "running", doneFiles)
+		add(checkF5(ctx, r.Client, domainName))
+		doneFiles++
+		setGroup(dom.GroupFiles, "running", doneFiles)
+		add(checkF6(ctx, r.Client, domainName))
+		doneFiles++
+		setGroup(dom.GroupFiles, "running", doneFiles)
+	}
 	add(checkF7(ctx, r.Client, domainName))
-	setGroup(dom.GroupFiles, "done", 1)
+	doneFiles++
+	setGroup(dom.GroupFiles, "done", doneFiles)
 
 	setGroup(dom.GroupSoft, "running", 0)
 	cms := detectCMS(body, hdr)
@@ -146,17 +179,18 @@ func (r *Runner) Run(ctx context.Context, domainName string, onEvent EventFunc) 
 	setGroup(dom.GroupSoft, "done", 4)
 
 	setGroup(dom.GroupDNS, "running", 0)
-	add(checkD1(domainName))
+	auth, authErr := newAuthDNS(domainName)
+	add(checkD1(domainName, auth, authErr))
 	setGroup(dom.GroupDNS, "running", 1)
-	add(checkD2(domainName))
+	add(checkD2(domainName, auth))
 	setGroup(dom.GroupDNS, "running", 2)
-	add(checkD3(domainName))
+	add(checkD3(domainName, auth, authErr))
 	setGroup(dom.GroupDNS, "running", 3)
-	add(checkD4(domainName))
+	add(checkD4(domainName, auth))
 	setGroup(dom.GroupDNS, "running", 4)
-	add(checkD5(domainName))
+	add(checkD5(domainName, auth))
 	setGroup(dom.GroupDNS, "running", 5)
-	add(checkD6(domainName))
+	add(checkD6(domainName, auth))
 	setGroup(dom.GroupDNS, "done", 6)
 
 	return findings, groups, nil
@@ -166,7 +200,6 @@ func finding(id string, group dom.GroupID, status dom.Status, sev dom.Severity, 
 	return dom.Finding{
 		ID: id, Group: group, Status: status, Severity: sev, Evidence: ev,
 		TitleKey: "check." + id + ".title", DangerKey: "check." + id + ".danger", SourceURL: source,
-		Fixes: fixes.For(id),
 	}
 }
 
@@ -450,6 +483,161 @@ func checkC4(url string, cookies []string) dom.Finding {
 	return finding("C4", dom.GroupCookie, dom.StatusPass, dom.SeverityInfo, ev, "https://developer.mozilla.org/docs/Web/HTTP/Headers/Set-Cookie#cookie_prefixes")
 }
 
+func probeURL(ctx context.Context, client *ssrf.Client, domain, path string) (*ssrf.Response, string) {
+	for _, scheme := range []string{"https", "http"} {
+		u := scheme + "://" + domain + path
+		res, err := client.Fetch(ctx, u)
+		if err != nil {
+			continue
+		}
+		return res, u
+	}
+	return nil, "https://" + domain + path
+}
+
+func bodyLooksHTML(b []byte) bool {
+	low := strings.ToLower(string(b))
+	return strings.Contains(low, "<html") || strings.Contains(low, "<!doctype")
+}
+
+func exposedOK(res *ssrf.Response) bool {
+	return res != nil && res.StatusCode == 200 && len(res.Body) > 0
+}
+
+func checkF1(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
+	res, u := probeURL(ctx, client, domain, "/.git/HEAD")
+	ev := dom.Evidence{URL: u, Detail: ".git/HEAD"}
+	if exposedOK(res) {
+		body := strings.TrimSpace(string(res.Body))
+		ev.Value = ssrf.Truncate(body, 200)
+		if strings.HasPrefix(body, "ref:") || body == "ref: refs/heads/master" || strings.HasPrefix(body, "ref: refs/") {
+			return finding("F1", dom.GroupFiles, dom.StatusFail, dom.SeverityCritical, ev, "https://owasp.org/www-community/vulnerabilities/Source_code_disclosure")
+		}
+		if !bodyLooksHTML(res.Body) && len(body) < 200 {
+			return finding("F1", dom.GroupFiles, dom.StatusFail, dom.SeverityCritical, ev, "https://owasp.org/www-community/vulnerabilities/Source_code_disclosure")
+		}
+	}
+	return finding("F1", dom.GroupFiles, dom.StatusPass, dom.SeverityCritical, ev, "https://owasp.org/www-community/vulnerabilities/Source_code_disclosure")
+}
+
+func checkF2(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
+	paths := []string{"/.env", "/wp-config.php.bak", "/config.php.old"}
+	ev := dom.Evidence{Detail: "env/config backups"}
+	for _, p := range paths {
+		res, u := probeURL(ctx, client, domain, p)
+		if !exposedOK(res) || bodyLooksHTML(res.Body) {
+			continue
+		}
+		body := string(res.Body)
+		low := strings.ToLower(body)
+		if strings.Contains(body, "=") || strings.Contains(low, "db_") || strings.Contains(low, "password") || strings.Contains(low, "define(") {
+			ev.URL = u
+			ev.Value = ssrf.Truncate(strings.TrimSpace(body), 200)
+			return finding("F2", dom.GroupFiles, dom.StatusFail, dom.SeverityCritical, ev, "https://owasp.org/www-community/vulnerabilities/Information_exposure_through_query_strings_in_url")
+		}
+	}
+	ev.URL = "https://" + domain + "/.env"
+	return finding("F2", dom.GroupFiles, dom.StatusPass, dom.SeverityCritical, ev, "https://owasp.org/www-community/vulnerabilities/Information_exposure_through_query_strings_in_url")
+}
+
+func checkF3(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
+	paths := []string{"/backup.zip", "/dump.sql", "/db.sql"}
+	ev := dom.Evidence{Detail: "backup dumps"}
+	for _, p := range paths {
+		res, u := probeURL(ctx, client, domain, p)
+		if res == nil || res.StatusCode != 200 || len(res.Body) < 4 {
+			continue
+		}
+		if bodyLooksHTML(res.Body) {
+			continue
+		}
+		ct := strings.ToLower(headerVal(res.Header, "Content-Type"))
+		body := res.Body
+		isZip := len(body) >= 2 && body[0] == 'P' && body[1] == 'K'
+		isSQL := strings.Contains(strings.ToLower(string(body[:min(200, len(body))])), "create table") ||
+			strings.Contains(ct, "sql") || strings.HasSuffix(p, ".sql")
+		isArchive := isZip || strings.Contains(ct, "zip") || strings.Contains(ct, "octet-stream")
+		if isZip || (isSQL && !bodyLooksHTML(body)) || (isArchive && len(body) > 512) {
+			ev.URL = u
+			ev.Value = ssrf.Truncate(ct+" "+string(body[:min(40, len(body))]), 200)
+			return finding("F3", dom.GroupFiles, dom.StatusFail, dom.SeverityCritical, ev, "https://owasp.org/www-project-web-security-testing-guide/")
+		}
+	}
+	ev.URL = "https://" + domain + "/backup.zip"
+	return finding("F3", dom.GroupFiles, dom.StatusPass, dom.SeverityCritical, ev, "https://owasp.org/www-project-web-security-testing-guide/")
+}
+
+func checkF4(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
+	paths := []string{"/phpinfo.php", "/server-status", "/info.php"}
+	ev := dom.Evidence{Detail: "diagnostic pages"}
+	for _, p := range paths {
+		res, u := probeURL(ctx, client, domain, p)
+		if !exposedOK(res) {
+			continue
+		}
+		low := strings.ToLower(string(res.Body))
+		if strings.Contains(low, "phpinfo()") || strings.Contains(low, "php version") ||
+			strings.Contains(low, "apache server status") || strings.Contains(low, "server-info") ||
+			strings.Contains(low, "scoreboard") {
+			ev.URL = u
+			ev.Value = ssrf.Truncate(strings.TrimSpace(string(res.Body)), 200)
+			return finding("F4", dom.GroupFiles, dom.StatusFail, dom.SeverityHigh, ev, "https://owasp.org/www-project-web-security-testing-guide/")
+		}
+	}
+	ev.URL = "https://" + domain + "/phpinfo.php"
+	return finding("F4", dom.GroupFiles, dom.StatusPass, dom.SeverityHigh, ev, "https://owasp.org/www-project-web-security-testing-guide/")
+}
+
+func checkF5(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
+	paths := []string{"/uploads/", "/files/", "/backup/"}
+	ev := dom.Evidence{Detail: "directory listing"}
+	for _, p := range paths {
+		res, u := probeURL(ctx, client, domain, p)
+		if !exposedOK(res) {
+			continue
+		}
+		low := strings.ToLower(string(res.Body))
+		if strings.Contains(low, "index of /") || strings.Contains(low, "directory listing") ||
+			strings.Contains(low, "<title>index of") {
+			ev.URL = u
+			ev.Value = ssrf.Truncate(strings.TrimSpace(string(res.Body)), 200)
+			return finding("F5", dom.GroupFiles, dom.StatusFail, dom.SeverityMedium, ev, "https://owasp.org/www-community/vulnerabilities/Directory_listing")
+		}
+	}
+	ev.URL = "https://" + domain + "/uploads/"
+	return finding("F5", dom.GroupFiles, dom.StatusPass, dom.SeverityMedium, ev, "https://owasp.org/www-community/vulnerabilities/Directory_listing")
+}
+
+func checkF6(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
+	paths := []string{"/phpmyadmin/", "/adminer.php"}
+	ev := dom.Evidence{Detail: "admin panels"}
+	for _, p := range paths {
+		res, u := probeURL(ctx, client, domain, p)
+		if res == nil || res.StatusCode >= 400 {
+			continue
+		}
+		if res.StatusCode == 401 || res.StatusCode == 403 {
+			continue
+		}
+		low := strings.ToLower(string(res.Body))
+		if strings.Contains(low, "phpmyadmin") || strings.Contains(low, "adminer") ||
+			(res.StatusCode == 200 && (strings.Contains(low, "mysql") && strings.Contains(low, "login"))) {
+			ev.URL = u
+			ev.Value = ssrf.Truncate(strings.TrimSpace(string(res.Body)), 200)
+			return finding("F6", dom.GroupFiles, dom.StatusFail, dom.SeverityMedium, ev, "https://owasp.org/www-project-web-security-testing-guide/")
+		}
+	}
+	ev.URL = "https://" + domain + "/phpmyadmin/"
+	return finding("F6", dom.GroupFiles, dom.StatusPass, dom.SeverityMedium, ev, "https://owasp.org/www-project-web-security-testing-guide/")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func checkF7(ctx context.Context, client *ssrf.Client, domain string) dom.Finding {
 	u := "https://" + domain + "/.well-known/security.txt"
 	ev := dom.Evidence{URL: u}
@@ -562,14 +750,26 @@ func checkS4(url, body string) dom.Finding {
 	return finding("S4", dom.GroupSoft, dom.StatusPass, dom.SeverityLow, ev, "https://developer.mozilla.org/docs/Web/Security/Subresource_Integrity")
 }
 
-func lookupTXT(name string) ([]string, error) {
-	return net.LookupTXT(name)
+func dnsDetail(kind, name string, auth *authDNS) string {
+	detail := kind + " " + name
+	if auth != nil {
+		if label := auth.NSLabel(); label != "" {
+			detail += " via NS " + label
+		}
+	}
+	return detail
 }
 
-func checkD1(domain string) dom.Finding {
-	ev := dom.Evidence{Detail: "SPF"}
-	txts, err := lookupTXT(domain)
+func checkD1(domain string, auth *authDNS, authErr error) dom.Finding {
+	name := domain
+	ev := dom.Evidence{Detail: dnsDetail("TXT", name, auth)}
+	if auth == nil && authErr != nil {
+		ev.Value = "NS lookup failed: " + ssrf.Truncate(authErr.Error(), 120)
+		return finding("D1", dom.GroupDNS, dom.StatusError, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7208")
+	}
+	txts, err := auth.LookupTXT(context.Background(), name)
 	if err != nil {
+		ev.Value = "lookup failed: " + ssrf.Truncate(err.Error(), 120)
 		return finding("D1", dom.GroupDNS, dom.StatusError, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7208")
 	}
 	var spf string
@@ -579,28 +779,36 @@ func checkD1(domain string) dom.Finding {
 			break
 		}
 	}
-	ev.Value = ssrf.Truncate(spf, 200)
 	if spf == "" {
+		ev.Value = "no v=spf1 record"
 		return finding("D1", dom.GroupDNS, dom.StatusFail, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7208")
 	}
+	ev.Value = ssrf.Truncate(spf, 200)
 	if strings.Contains(strings.ToLower(spf), "+all") {
+		ev.Detail = dnsDetail("TXT", name, auth) + " (+all allows any host)"
 		return finding("D1", dom.GroupDNS, dom.StatusFail, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7208")
 	}
 	return finding("D1", dom.GroupDNS, dom.StatusPass, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7208")
 }
 
-func checkD2(domain string) dom.Finding {
-	ev := dom.Evidence{Detail: "DKIM selectors (informational probe)"}
+func checkD2(domain string, auth *authDNS) dom.Finding {
 	selectors := []string{"default", "google", "selector1", "selector2", "k1", "s1", "dkim"}
+	ev := dom.Evidence{Detail: dnsDetail("TXT", "<selector>._domainkey."+domain, auth)}
+	if auth == nil {
+		ev.Value = "no DKIM among selectors: " + strings.Join(selectors, ", ")
+		return finding("D2", dom.GroupDNS, dom.StatusInfo, dom.SeverityInfo, ev, "https://datatracker.ietf.org/doc/html/rfc6376")
+	}
 	found := ""
 	for _, s := range selectors {
-		txts, err := lookupTXT(s + "._domainkey." + domain)
+		host := s + "._domainkey." + domain
+		txts, err := auth.LookupTXT(context.Background(), host)
 		if err != nil {
 			continue
 		}
 		for _, t := range txts {
 			if strings.Contains(strings.ToLower(t), "v=dkim1") || strings.Contains(t, "p=") {
 				found = s
+				ev.Detail = dnsDetail("TXT", host, auth)
 				ev.Value = ssrf.Truncate(t, 200)
 				break
 			}
@@ -610,15 +818,22 @@ func checkD2(domain string) dom.Finding {
 		}
 	}
 	if found == "" {
+		ev.Value = "no DKIM among selectors: " + strings.Join(selectors, ", ")
 		return finding("D2", dom.GroupDNS, dom.StatusInfo, dom.SeverityInfo, ev, "https://datatracker.ietf.org/doc/html/rfc6376")
 	}
 	return finding("D2", dom.GroupDNS, dom.StatusPass, dom.SeverityInfo, ev, "https://datatracker.ietf.org/doc/html/rfc6376")
 }
 
-func checkD3(domain string) dom.Finding {
-	ev := dom.Evidence{Detail: "DMARC"}
-	txts, err := lookupTXT("_dmarc." + domain)
+func checkD3(domain string, auth *authDNS, authErr error) dom.Finding {
+	name := "_dmarc." + domain
+	ev := dom.Evidence{Detail: dnsDetail("TXT", name, auth)}
+	if auth == nil && authErr != nil {
+		ev.Value = "NS lookup failed: " + ssrf.Truncate(authErr.Error(), 120)
+		return finding("D3", dom.GroupDNS, dom.StatusError, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7489")
+	}
+	txts, err := auth.LookupTXT(context.Background(), name)
 	if err != nil {
+		ev.Value = "lookup failed: " + ssrf.Truncate(err.Error(), 120)
 		return finding("D3", dom.GroupDNS, dom.StatusError, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7489")
 	}
 	var rec string
@@ -628,48 +843,71 @@ func checkD3(domain string) dom.Finding {
 			break
 		}
 	}
-	ev.Value = ssrf.Truncate(rec, 200)
 	if rec == "" {
+		ev.Value = "no v=DMARC1 record"
 		return finding("D3", dom.GroupDNS, dom.StatusFail, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7489")
 	}
+	ev.Value = ssrf.Truncate(rec, 200)
 	if strings.Contains(strings.ToLower(rec), "p=none") {
+		ev.Detail = dnsDetail("TXT", name, auth) + " (p=none = monitor only)"
 		return finding("D3", dom.GroupDNS, dom.StatusFail, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7489")
 	}
 	return finding("D3", dom.GroupDNS, dom.StatusPass, dom.SeverityMedium, ev, "https://datatracker.ietf.org/doc/html/rfc7489")
 }
 
-func checkD4(domain string) dom.Finding {
-	ev := dom.Evidence{Detail: "DNSSEC (informational)"}
-	_, err := net.LookupIP(domain)
+func checkD4(domain string, auth *authDNS) dom.Finding {
+	ev := dom.Evidence{Detail: dnsDetail("DNSSEC", domain, auth)}
+	var err error
+	if auth != nil {
+		_, err = auth.LookupIP(context.Background(), domain)
+	} else {
+		_, err = net.LookupIP(domain)
+	}
 	if err != nil {
 		return finding("D4", dom.GroupDNS, dom.StatusError, dom.SeverityInfo, ev, "https://www.icann.org/resources/pages/dnssec-what-is-it-why-important-2019-03-05-en")
 	}
-	// Without a validating resolver we only report informational unknown.
 	ev.Value = "not verified by validating resolver in MVP"
 	return finding("D4", dom.GroupDNS, dom.StatusInfo, dom.SeverityInfo, ev, "https://www.icann.org/resources/pages/dnssec-what-is-it-why-important-2019-03-05-en")
 }
 
-func checkD5(domain string) dom.Finding {
-	ev := dom.Evidence{Detail: "CAA (informational; full CAA RR parse deferred)"}
-	if _, err := net.LookupHost(domain); err != nil {
+func checkD5(domain string, auth *authDNS) dom.Finding {
+	ev := dom.Evidence{Detail: dnsDetail("CAA", domain, auth)}
+	var err error
+	if auth != nil {
+		_, err = auth.LookupIP(context.Background(), domain)
+	} else {
+		_, err = net.LookupHost(domain)
+	}
+	if err != nil {
 		return finding("D5", dom.GroupDNS, dom.StatusError, dom.SeverityInfo, ev, "https://datatracker.ietf.org/doc/html/rfc8659")
 	}
 	ev.Value = "CAA records not enumerated in MVP resolver"
 	return finding("D5", dom.GroupDNS, dom.StatusInfo, dom.SeverityInfo, ev, "https://datatracker.ietf.org/doc/html/rfc8659")
 }
 
-func checkD6(domain string) dom.Finding {
-	ev := dom.Evidence{Detail: "Dangling CNAME via common subdomains (CT full crawl deferred)"}
+func checkD6(domain string, auth *authDNS) dom.Finding {
+	ev := dom.Evidence{Detail: dnsDetail("CNAME", "common subdomains", auth)}
 	subs := []string{"www", "mail", "ftp", "dev", "staging", "cdn", "static"}
 	for _, s := range subs {
 		host := s + "." + domain
-		cname, err := net.LookupCNAME(host)
+		var cname string
+		var err error
+		if auth != nil {
+			cname, err = auth.LookupCNAME(context.Background(), host)
+		} else {
+			cname, err = net.LookupCNAME(host)
+		}
 		if err != nil || cname == "" || strings.EqualFold(cname, host+".") {
 			continue
 		}
 		cname = strings.TrimSuffix(cname, ".")
 		if looksExternalDangling(cname) {
-			ips, err := net.LookupIP(host)
+			var ips []net.IP
+			if auth != nil {
+				ips, err = auth.LookupIP(context.Background(), host)
+			} else {
+				ips, err = net.LookupIP(host)
+			}
 			if err != nil || len(ips) == 0 {
 				ev.Value = ssrf.Truncate(host+" -> "+cname, 200)
 				return finding("D6", dom.GroupDNS, dom.StatusFail, dom.SeverityHigh, ev, "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery")
@@ -701,7 +939,10 @@ func isOptOutTXT(value string) bool {
 }
 
 func OptedOut(domain string) bool {
-	txts, err := net.LookupTXT("_sitechecker-optout." + domain)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resolver := &net.Resolver{}
+	txts, err := resolver.LookupTXT(ctx, "_sitechecker-optout."+domain)
 	if err != nil {
 		return false
 	}
@@ -714,6 +955,8 @@ func OptedOut(domain string) bool {
 }
 
 func CheckSecurityTxtOptOut(ctx context.Context, client *ssrf.Client, domain string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	res, err := client.Fetch(ctx, "https://"+domain+"/.well-known/security.txt")
 	if err != nil || res.StatusCode >= 400 {
 		return false

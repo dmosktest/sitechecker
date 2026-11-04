@@ -8,23 +8,27 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"golang.org/x/net/idna"
+	"golang.org/x/net/publicsuffix"
 )
 
 const (
-	MaxBodyBytes     = 1 << 20
-	RequestTimeout   = 10 * time.Second
-	MaxRedirects     = 5
-	UserAgent        = "SiteChecker/0.1 (+https://sitechecker.dmosk.net/)"
+	MaxBodyBytes   = 1 << 20
+	RequestTimeout = 10 * time.Second
+	MaxRedirects   = 5
+	UserAgent      = "SiteChecker/0.2 (+https://sitechecker.dmosk.net/)"
 )
 
 var (
-	ErrInvalidURL   = errors.New("invalid_domain")
+	ErrInvalidURL    = errors.New("invalid_domain")
 	ErrBlockedTarget = errors.New("blocked_target")
+	jsCookieAssign   = regexp.MustCompile(`(?i)document\.cookie\s*=\s*['"]([^'"]+)['"]`)
 )
 
 type Response struct {
@@ -133,14 +137,28 @@ func dialFixed(ctx context.Context, network, addr string, fixed net.IP) (net.Con
 }
 
 type Client struct {
-	ua string
+	ua  string
+	jar http.CookieJar
 }
 
 func NewClient() *Client {
-	return &Client{ua: UserAgent}
+	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	if err != nil {
+		jar, _ = cookiejar.New(nil)
+	}
+	return &Client{ua: UserAgent, jar: jar}
 }
 
 func (c *Client) Fetch(ctx context.Context, rawURL string) (*Response, error) {
+	return c.fetch(ctx, rawURL, true)
+}
+
+// FetchNoFollow returns the first response without following redirects (needed for HTTP→HTTPS checks).
+func (c *Client) FetchNoFollow(ctx context.Context, rawURL string) (*Response, error) {
+	return c.fetch(ctx, rawURL, false)
+}
+
+func (c *Client) fetch(ctx context.Context, rawURL string, followRedirects bool) (*Response, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, ErrInvalidURL
@@ -160,7 +178,11 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (*Response, error) {
 
 	current := u
 	var last *Response
-	for i := 0; i <= MaxRedirects; i++ {
+	maxHops := 0
+	if followRedirects {
+		maxHops = MaxRedirects
+	}
+	for i := 0; i <= maxHops; i++ {
 		host := strings.ToLower(current.Hostname())
 		ip, err := resolveSafe(ctx, host)
 		if err != nil {
@@ -172,33 +194,33 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (*Response, error) {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialFixed(ctx, network, addr, ip)
 			},
-			TLSClientConfig:     &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
-			DisableCompression:  false,
+			TLSClientConfig:        &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
+			DisableCompression:     false,
 			MaxResponseHeaderBytes: 1 << 16,
 		}
 		client := &http.Client{
 			Transport: transport,
 			Timeout:   RequestTimeout,
+			Jar:       c.jar,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current.String(), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("User-Agent", c.ua)
-		req.Header.Set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
-
-		res, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrBlockedTarget, err)
-		}
-		body, _ := io.ReadAll(io.LimitReader(res.Body, MaxBodyBytes+1))
-		_ = res.Body.Close()
-		if len(body) > MaxBodyBytes {
-			body = body[:MaxBodyBytes]
+		var res *http.Response
+		var body []byte
+		for attempt := 0; attempt < 2; attempt++ {
+			res, body, err = c.doOnce(ctx, client, current.String())
+			if err != nil {
+				return nil, err
+			}
+			if attempt == 0 {
+				if cs := cookiesFromJSBody(body); len(cs) > 0 {
+					c.jar.SetCookies(current, cs)
+					continue
+				}
+			}
+			break
 		}
 
 		out := &Response{
@@ -214,6 +236,9 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (*Response, error) {
 		}
 		last = out
 
+		if !followRedirects {
+			break
+		}
 		if res.StatusCode >= 300 && res.StatusCode < 400 {
 			loc := res.Header.Get("Location")
 			if loc == "" {
@@ -241,6 +266,55 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (*Response, error) {
 		break
 	}
 	return last, nil
+}
+
+func (c *Client) doOnce(ctx context.Context, client *http.Client, rawURL string) (*http.Response, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("User-Agent", c.ua)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrBlockedTarget, err)
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, MaxBodyBytes+1))
+	_ = res.Body.Close()
+	if len(body) > MaxBodyBytes {
+		body = body[:MaxBodyBytes]
+	}
+	return res, body, nil
+}
+
+// cookiesFromJSBody pulls name=value pairs from document.cookie = '…' in small antibot stubs
+// (Beget and similar). Not host-specific.
+func cookiesFromJSBody(body []byte) []*http.Cookie {
+	if len(body) == 0 || len(body) > 8192 {
+		return nil
+	}
+	matches := jsCookieAssign.FindAllSubmatch(body, 8)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]*http.Cookie, 0, len(matches))
+	for _, m := range matches {
+		raw := string(m[1])
+		pair := strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
+		name, val, ok := strings.Cut(pair, "=")
+		name = strings.TrimSpace(name)
+		val = strings.TrimSpace(val)
+		if !ok || name == "" || strings.ContainsAny(name, " \t\r\n") {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, &http.Cookie{Name: name, Value: val, Path: "/"})
+	}
+	return out
 }
 
 func (c *Client) HeadOrGet(ctx context.Context, rawURL string) (*Response, error) {

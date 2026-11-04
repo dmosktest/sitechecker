@@ -51,12 +51,14 @@ type Evidence struct {
 }
 
 type Fixes struct {
-	Nginx    string `json:"nginx,omitempty"`
-	Apache   string `json:"apache,omitempty"`
-	Htaccess string `json:"htaccess,omitempty"`
-	Traefik  string `json:"traefik,omitempty"`
-	Caddy    string `json:"caddy,omitempty"`
-	Other    string `json:"other,omitempty"`
+	Nginx      string `json:"nginx,omitempty"`
+	Apache     string `json:"apache,omitempty"`
+	Htaccess   string `json:"htaccess,omitempty"`
+	Traefik    string `json:"traefik,omitempty"`
+	Caddy      string `json:"caddy,omitempty"`
+	Cloudflare string `json:"cloudflare,omitempty"`
+	WordPress  string `json:"wordpress,omitempty"`
+	Other      string `json:"other,omitempty"`
 }
 
 type Finding struct {
@@ -82,9 +84,33 @@ type CheckJob struct {
 	ID        string    `json:"id"`
 	Domain    string    `json:"domain"`
 	Lang      string    `json:"lang"`
+	Level     int       `json:"level"`
 	CreatedAt time.Time `json:"created_at"`
 	IP        string    `json:"ip"`
 }
+
+type VerifyMethod string
+
+const (
+	VerifyDNS  VerifyMethod = "dns"
+	VerifyFile VerifyMethod = "file"
+	VerifyMeta VerifyMethod = "meta"
+)
+
+type Verification struct {
+	ID            string       `json:"id"`
+	Domain        string       `json:"domain"`
+	Method        VerifyMethod `json:"method"`
+	Token         string       `json:"token"`
+	Scope         string       `json:"scope"`
+	Status        string       `json:"status"`
+	Instruction   string       `json:"instruction,omitempty"`
+	TokenExpires  time.Time    `json:"token_expires"`
+	VerifiedUntil *time.Time   `json:"verified_until,omitempty"`
+	CreatedAt     time.Time    `json:"created_at"`
+}
+
+const ReportFreshTTL = 24 * time.Hour
 
 type CheckRecord struct {
 	ID           string           `json:"id"`
@@ -102,4 +128,25 @@ type CheckRecord struct {
 	TopFixes     []string         `json:"top_fixes,omitempty"`
 	Error        string           `json:"error,omitempty"`
 	Disclaimer   string           `json:"disclaimer"`
+	Fresh        bool             `json:"fresh"`
+	FreshUntil   *time.Time       `json:"fresh_until,omitempty"`
+}
+
+func (r *CheckRecord) ApplyFreshness(now time.Time) {
+	if r == nil {
+		return
+	}
+	switch r.State {
+	case CheckQueued, CheckRunning:
+		r.Fresh = true
+		r.FreshUntil = nil
+		return
+	}
+	base := r.CreatedAt
+	if r.FinishedAt != nil {
+		base = *r.FinishedAt
+	}
+	until := base.Add(ReportFreshTTL)
+	r.FreshUntil = &until
+	r.Fresh = now.Before(until)
 }

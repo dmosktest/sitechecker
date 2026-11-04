@@ -3,6 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import {
+  renderMethodologyPage,
+  renderSamplePage,
+} from "./src/docs-content";
+import {
   localizeIndexHtml,
   renderNotFoundHtml,
   renderRobotsTxt,
@@ -170,6 +174,20 @@ function langDevMiddleware(
       return;
     }
 
+    if (isLocale(segLower)) {
+      const rest = pathname.slice(segLower.length + 1).replace(/\/+$/, "");
+      if (rest === "sample" || rest === "methodology") {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(
+          rest === "sample"
+            ? renderSamplePage(segLower)
+            : renderMethodologyPage(segLower),
+        );
+        return;
+      }
+    }
+
     if (/^\/[a-z]{2,3}(\/|$)/i.test(pathname) && !isLocale(segLower)) {
       res.statusCode = 404;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -242,6 +260,14 @@ function emitLangPages(): Plugin {
           renderNotFoundHtml(locale),
           "utf8",
         );
+        for (const [name, html] of [
+          ["sample", renderSamplePage(locale)],
+          ["methodology", renderMethodologyPage(locale)],
+        ] as const) {
+          const pageDir = path.join(dir, name);
+          fs.mkdirSync(pageDir, { recursive: true });
+          fs.writeFileSync(path.join(pageDir, "index.html"), html, "utf8");
+        }
       }
 
       fs.unlinkSync(indexPath);

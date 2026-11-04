@@ -14,10 +14,10 @@
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
-    <title>sitechecker — проверка безопасности сайта</title>
+    <title>sitechecker — проверка безопасности сайта (уровни 1 и 2)</title>
     <meta
       name="description"
-      content="Пассивная проверка заголовков, TLS, cookie, DNS и почты. Оценка A–F и правки для nginx и Apache."
+      content="Пассивная проверка сайта за минуту: уровень 1 для всех, уровень 2 после подтверждения владения. Оценка A–F, живой ход, правки для nginx, Apache, Traefik, Caddy, Cloudflare и WordPress, ТЗ для ИИ. Без регистрации."
     />
     <link rel="canonical" href="https://sitechecker.dmosk.net/ru/" />
     <link rel="alternate" hreflang="ru" href="https://sitechecker.dmosk.net/ru/" />
@@ -25,10 +25,10 @@
     <link rel="alternate" hreflang="x-default" href="https://sitechecker.dmosk.net/en/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://sitechecker.dmosk.net/ru/" />
-    <meta property="og:title" content="sitechecker — проверка безопасности сайта" />
+    <meta property="og:title" content="sitechecker — проверка безопасности сайта (уровни 1 и 2)" />
     <meta
       property="og:description"
-      content="Пассивная проверка заголовков, TLS, cookie, DNS и почты. Оценка A–F и правки для nginx и Apache."
+      content="Пассивная проверка сайта за минуту: уровень 1 для всех, уровень 2 после подтверждения владения. Оценка A–F, живой ход, правки для nginx, Apache, Traefik, Caddy, Cloudflare и WordPress, ТЗ для ИИ. Без регистрации."
     />
     <meta property="og:locale" content="ru_RU" />
     <meta property="og:locale:alternate" content="en_US" />
@@ -84,21 +84,76 @@
       <div id="main-panel">
         <h1 id="heading">Проверка безопасности сайта</h1>
         <p class="lead" id="lead">
-          Введите домен — за минуту получите оценку A–F, список проблем и готовые правки для nginx и Apache.
+          Введите домен — за минуту получите оценку A–F, живой ход проверки и копируемые правки для nginx, Apache, Traefik, Caddy, Cloudflare и WordPress. После подтверждения владения (DNS, файл или meta) доступен уровень 2: .git, .env, бэкапы, phpinfo, листинг и админки БД. Только пассивные GET/HEAD, без атак. Можно скачать ТЗ для ИИ.
         </p>
 
         <form id="check-form" class="check-form">
           <label id="domain-label" for="domain-input">Адрес сайта</label>
           <div class="field-row">
-            <input id="domain-input" name="domain" type="text" autocomplete="url" inputmode="url" required />
+            <input id="domain-input" name="domain" type="text" autocomplete="url" inputmode="url" placeholder="example.com" required />
             <button id="check-btn" type="submit">Проверить</button>
           </div>
+          <label class="level-row" for="level2-toggle">
+            <input id="level2-toggle" type="checkbox" disabled />
+            <span id="level2-label">Глубокие проверки (уровень 2): .git, секреты, дампы, админки — <a href="#verify-panel" class="verify-jump">сначала подтвердите владение</a></span>
+          </label>
           <p id="form-error" class="form-error" role="alert"></p>
         </form>
 
-        <section id="progress-panel" class="panel" hidden>
+        <nav id="trust-nav" class="trust-nav" aria-label="Documentation links">
+          <a href="/ru/sample/">Пример отчёта</a>
+          <span class="trust-sep" aria-hidden="true">·</span>
+          <a href="/ru/methodology/">Методология</a>
+        </nav>
+
+        <details id="verify-panel" class="verify-panel">
+          <summary id="verify-summary">Подтвердить владение доменом</summary>
+          <p id="verify-lead" class="muted">
+            Уровень 2 ищет открытые .git, .env и бэкапы конфигов, SQL/zip-дампы, phpinfo, листинг каталогов и панели вроде phpMyAdmin/Adminer. Доступен только после подтверждения, что домен ваш (DNS TXT, файл или meta-тег).
+          </p>
+          <p id="verify-status" class="verify-status" hidden></p>
+          <div class="verify-controls">
+            <label id="verify-method-label" for="verify-method">Способ</label>
+            <select id="verify-method">
+              <option value="dns">DNS TXT</option>
+              <option value="file">Файл</option>
+              <option value="meta">Meta-тег</option>
+            </select>
+            <button id="verify-start-btn" type="button" class="secondary">Получить токен</button>
+            <button id="verify-confirm-btn" type="button" class="secondary" hidden>Проверить токен</button>
+          </div>
+          <p id="verify-dns-hint" class="muted verify-dns-hint">
+            Изменения DNS могут появиться не сразу — от нескольких минут до нескольких часов. Если проверка не проходит, подождите и повторите.
+          </p>
+          <pre id="verify-instruction" class="verify-instruction" hidden></pre>
+          <p id="verify-error" class="form-error" role="alert"></p>
+        </details>
+
+        <section id="progress-panel" class="panel progress-panel" hidden aria-busy="false">
           <h2 id="progress-title">Ход проверки</h2>
+          <div id="progress-status" class="progress-status" role="status" aria-live="polite">
+            <span class="progress-spinner" aria-hidden="true"></span>
+            <div class="progress-status-copy">
+              <p id="progress-status-text" class="progress-status-text">Проверка идёт…</p>
+              <p id="progress-step-text" class="progress-step-text muted"></p>
+            </div>
+            <span id="progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-overall" aria-hidden="true">
+            <div class="progress-overall-track">
+              <span id="progress-overall-fill" class="progress-overall-fill"></span>
+            </div>
+          </div>
           <ul id="progress-list" class="progress-list"></ul>
+        </section>
+
+        <section id="share-panel" class="panel share-panel" hidden>
+          <label id="share-label" for="share-url">Ссылка на отчёт</label>
+          <div class="share-row">
+            <input id="share-url" type="text" readonly />
+            <button id="share-copy-btn" type="button" class="secondary">Копировать</button>
+          </div>
+          <p id="share-hint" class="muted">Ссылка открывает готовый отчёт. Актуальность — 24 часа; позже проверка запустится снова.</p>
         </section>
 
         <section id="report-panel" class="panel" hidden>
@@ -116,8 +171,8 @@
             <button id="retry-btn" type="button" class="secondary">Проверить снова</button>
           </div>
           <p id="grade-summary" class="grade-summary" hidden></p>
-          <h3 id="top-fixes-title">Три главных исправления</h3>
-          <ol id="top-fixes-list"></ol>
+          <h3 id="top-fixes-title" hidden>Три главных исправления</h3>
+          <ol id="top-fixes-list" hidden></ol>
           <div class="filters-row">
             <div class="filters">
               <button type="button" data-filter="all">Все</button>

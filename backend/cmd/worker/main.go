@@ -66,7 +66,14 @@ func process(ctx context.Context, st *store.Store, runner *checks.Runner, job *d
 	scanCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	findings, progress, err := runner.Run(scanCtx, job.Domain, func(evt map[string]any) {
+	level := job.Level
+	if level < 1 {
+		level = rec.Level
+	}
+	if level < 1 {
+		level = 1
+	}
+	findings, progress, err := runner.Run(scanCtx, job.Domain, level, func(evt map[string]any) {
 		_ = st.PublishEvent(ctx, job.ID, evt)
 		p, ok := evt["progress"].([]domain.GroupProgress)
 		if !ok {

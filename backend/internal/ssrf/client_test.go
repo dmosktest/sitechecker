@@ -29,3 +29,19 @@ func TestIsBlockedIP(t *testing.T) {
 		t.Fatal("8.8.8.8 should be allowed")
 	}
 }
+
+func TestCookiesFromJSBody(t *testing.T) {
+	beget := []byte(`<html><head><script>function set_cookie(){var now = new Date();document.cookie='beget=begetok'+'; expires='+now.toGMTString()+'; path=/';}set_cookie();location.reload();</script></head><body></body></html>`)
+	cs := cookiesFromJSBody(beget)
+	if len(cs) != 1 || cs[0].Name != "beget" || cs[0].Value != "begetok" {
+		t.Fatalf("beget cookies=%v", cs)
+	}
+	other := []byte(`<script>document.cookie="gate=ok; path=/"; location.reload();</script>`)
+	cs = cookiesFromJSBody(other)
+	if len(cs) != 1 || cs[0].Name != "gate" || cs[0].Value != "ok" {
+		t.Fatalf("gate cookies=%v", cs)
+	}
+	if cookiesFromJSBody([]byte(`<html>no cookies here</html>`)) != nil {
+		t.Fatal("expected nil")
+	}
+}

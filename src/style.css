@@ -10,6 +10,11 @@
   --accent-text: #2a1404;
   --danger: #e07070;
   --ok: #7cbc7c;
+  --sev-critical: #e07070;
+  --sev-high: #e08a4a;
+  --sev-medium: #e0b35a;
+  --sev-low: #6aa8e0;
+  --sev-info: #7cbc7c;
   --radius: 6px;
   --font: "IBM Plex Sans", "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", "Consolas", monospace;
@@ -714,10 +719,225 @@ h1 {
   margin: 0;
 }
 
+.trust-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+  align-items: center;
+  margin: 0.15rem 0 1rem;
+  font-size: 0.92rem;
+}
+
+.trust-sep {
+  color: var(--muted);
+}
+
+.level-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0.15rem 0 0;
+  color: var(--text);
+  font-size: 0.92rem;
+  max-width: 100%;
+}
+
+.check-form .level-row input[type="checkbox"] {
+  width: auto;
+  max-width: none;
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+  padding: 0;
+}
+
+a.verify-jump {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+a.verify-jump:hover {
+  color: var(--accent-hover);
+}
+
+.verify-panel {
+  margin: 0 0 1.25rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  max-width: 100%;
+}
+
+.verify-panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.verify-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.verify-panel[open] > summary {
+  margin-bottom: 0.65rem;
+}
+
+.verify-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
+.verify-controls select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+}
+
+.verify-dns-hint {
+  margin: 0 0 0.55rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.verify-dns-hint[hidden] {
+  display: none;
+}
+
+.verify-instruction {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.verify-status {
+  margin: 0.35rem 0 0;
+  font-size: 0.92rem;
+}
+
+.verify-status[data-tone="good"] {
+  color: var(--ok);
+}
+
+.verify-status[data-tone="bad"] {
+  color: var(--danger);
+}
+
 .panel {
   margin-top: 1.75rem;
   padding: 1.1rem 0 0;
   border-top: 1px solid var(--border);
+}
+
+.progress-panel[data-scanning="true"] {
+  border-top-color: var(--accent);
+}
+
+.progress-status {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 0.85rem 0 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.progress-panel[data-scanning="true"] .progress-status {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.progress-spinner {
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-top-color: var(--accent);
+  opacity: 0;
+}
+
+.progress-panel[data-scanning="true"] .progress-spinner {
+  opacity: 1;
+  animation: progress-spin 0.8s linear infinite;
+}
+
+.progress-status-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.progress-status-text {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.05rem;
+  word-break: break-word;
+}
+
+.progress-step-text {
+  margin: 0.2rem 0 0;
+  font-size: 0.92rem;
+}
+
+.progress-pct {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 3.5rem;
+  text-align: right;
+}
+
+.progress-panel[data-scanning="false"] .progress-pct {
+  color: var(--ok);
+}
+
+.progress-overall {
+  margin: 0 0 1rem;
+}
+
+.progress-overall-track {
+  height: 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  overflow: hidden;
+}
+
+.progress-overall-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  transition: width 0.3s ease;
+}
+
+.progress-panel[data-scanning="true"] .progress-overall-fill {
+  animation: progress-sheen 1.4s ease-in-out infinite;
+}
+
+.progress-panel[data-scanning="false"] .progress-overall-fill {
+  background: var(--ok);
+  animation: none;
 }
 
 .progress-list {
@@ -726,6 +946,22 @@ h1 {
   margin: 0;
   display: grid;
   gap: 0.55rem;
+}
+
+@keyframes progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes progress-sheen {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.25);
+  }
 }
 
 .progress-item {
@@ -909,6 +1145,12 @@ h1 {
   color: var(--text);
 }
 
+.dns-prop-hint {
+  margin: 0.55rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 .pill.code {
   font-family: var(--mono);
   letter-spacing: 0.02em;
@@ -922,15 +1164,58 @@ h1 {
   color: var(--muted);
 }
 
-.sev-critical,
+.sev-critical {
+  color: var(--sev-critical);
+  border-color: var(--sev-critical);
+}
+
+.sev-high {
+  color: var(--sev-high);
+  border-color: var(--sev-high);
+}
+
+.sev-medium {
+  color: var(--sev-medium);
+  border-color: var(--sev-medium);
+}
+
+.sev-low {
+  color: var(--sev-low);
+  border-color: var(--sev-low);
+}
+
+.sev-info {
+  color: var(--sev-info);
+  border-color: var(--sev-info);
+}
+
 .status-fail {
   color: var(--danger);
   border-color: var(--danger);
 }
 
-.status-pass,
-.sev-info {
+.status-pass {
   color: var(--ok);
+}
+
+.share-panel {
+  margin-top: 1rem;
+}
+
+.share-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.share-row input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  font-family: var(--mono);
+  font-size: 0.85rem;
 }
 
 .fix-tabs {

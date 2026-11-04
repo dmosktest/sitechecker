@@ -94,6 +94,10 @@ self.addEventListener("fetch", (event) => {
 
   if (url.origin !== self.location.origin) return;
 
+  if (url.pathname.startsWith("/api/") || url.pathname === "/health") {
+    return;
+  }
+
   if (url.pathname === "/" || url.pathname === "/index.html") {
     if (!self.navigator.onLine) {
       event.respondWith(

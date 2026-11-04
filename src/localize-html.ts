@@ -1,4 +1,6 @@
+import { trustNavHtml } from "./docs-content";
 import { t } from "./i18n";
+import type { MessageKey } from "./i18n-keys";
 import { NOT_FOUND_COPY } from "./notfound-messages";
 import {
   buildAppJsonLd,
@@ -141,6 +143,73 @@ export function localizeIndexHtml(html: string, locale: Locale): string {
 
   out = replaceTagContent(out, "h1", "heading", copy.heading);
   out = replaceTagContent(out, "p", "lead", copy.leadHtml);
+
+  const setIdText = (tag: string, id: string, key: MessageKey) => {
+    out = replaceTagContent(out, tag, id, t(locale, key));
+  };
+  setIdText("label", "domain-label", "domainLabel");
+  setIdText("button", "check-btn", "checkBtn");
+  {
+    const link = `<a href="#verify-panel" class="verify-jump">${t(locale, "level2VerifyLink")}</a>`;
+    const html = t(locale, "level2Label").split("{link}").join(link);
+    out = replaceTagContent(out, "span", "level2-label", html);
+  }
+  setIdText("summary", "verify-summary", "verifySummary");
+  setIdText("p", "verify-lead", "verifyLead");
+  setIdText("label", "verify-method-label", "verifyMethod");
+  setIdText("button", "verify-start-btn", "verifyStart");
+  setIdText("button", "verify-confirm-btn", "verifyConfirm");
+  setIdText("p", "verify-dns-hint", "verifyDnsWait");
+  setIdText("h2", "progress-title", "progressTitle");
+  setIdText("label", "share-label", "shareLabel");
+  setIdText("button", "share-copy-btn", "shareCopy");
+  setIdText("p", "share-hint", "shareHint");
+  setIdText("h2", "report-title", "reportTitle");
+  setIdText("span", "grade-label", "gradeLabel");
+  setIdText("span", "score-label", "scoreLabel");
+  setIdText("button", "retry-btn", "retry");
+  setIdText("h3", "top-fixes-title", "topFixes");
+  setIdText("span", "ai-prompt-btn-text", "downloadAiPrompt");
+  setIdText("p", "disclaimer", "disclaimer");
+
+  out = out.replace(
+    /(<input\b[^>]*\bid=["']domain-input["'][^>]*\bplaceholder=)(["'])(.*?)(\2)/i,
+    `$1$2${t(locale, "domainPlaceholder")}$4`,
+  );
+  out = out.replace(
+    /(<option\b[^>]*\bvalue=["']dns["'][^>]*>)([\s\S]*?)(<\/option>)/i,
+    `$1${t(locale, "verifyDns")}$3`,
+  );
+  out = out.replace(
+    /(<option\b[^>]*\bvalue=["']file["'][^>]*>)([\s\S]*?)(<\/option>)/i,
+    `$1${t(locale, "verifyFile")}$3`,
+  );
+  out = out.replace(
+    /(<option\b[^>]*\bvalue=["']meta["'][^>]*>)([\s\S]*?)(<\/option>)/i,
+    `$1${t(locale, "verifyMeta")}$3`,
+  );
+  out = out.replace(
+    /(<button\b[^>]*\bdata-filter=["']all["'][^>]*>)([\s\S]*?)(<\/button>)/i,
+    `$1${t(locale, "filterAll")}$3`,
+  );
+  out = out.replace(
+    /(<button\b[^>]*\bdata-filter=["']fail["'][^>]*>)([\s\S]*?)(<\/button>)/i,
+    `$1${t(locale, "filterFail")}$3`,
+  );
+  out = out.replace(
+    /(<button\b[^>]*\bdata-filter=["']pass["'][^>]*>)([\s\S]*?)(<\/button>)/i,
+    `$1${t(locale, "filterPass")}$3`,
+  );
+  out = out.replace(
+    /(<p\b[^>]*\bclass=["'][^"']*\btip\b[^"']*["'][^>]*>)([\s\S]*?)(<\/p>)/i,
+    `$1${t(locale, "noscript")}$3`,
+  );
+
+  out = out.replace(
+    /<nav\b[^>]*\bid=["']trust-nav["'][^>]*>[\s\S]*?<\/nav>/i,
+    trustNavHtml(locale),
+  );
+
   out = replaceTagContent(out, "article", "seo-root", renderSeoHtml(locale));
 
   out = out.replace(
@@ -196,21 +265,27 @@ export function renderNotFoundHtml(locale: Locale): string {
 `;
 }
 
-export function renderSitemapXml(): string {
+function sitemapPageBlock(pathSuffix: string): string {
   const alts = [
     ...LOCALES.map(
       (loc) =>
-        `    <xhtml:link rel="alternate" hreflang="${loc}" href="${localeUrl(loc)}"/>`,
+        `    <xhtml:link rel="alternate" hreflang="${loc}" href="${localeUrl(loc)}${pathSuffix}"/>`,
     ),
-    `    <xhtml:link rel="alternate" hreflang="x-default" href="${localeUrl(X_DEFAULT_LOCALE)}"/>`,
+    `    <xhtml:link rel="alternate" hreflang="x-default" href="${localeUrl(X_DEFAULT_LOCALE)}${pathSuffix}"/>`,
   ].join("\n");
 
-  const urls = LOCALES.map(
+  return LOCALES.map(
     (loc) => `  <url>
-    <loc>${localeUrl(loc)}</loc>
+    <loc>${localeUrl(loc)}${pathSuffix}</loc>
 ${alts}
   </url>`,
   ).join("\n");
+}
+
+export function renderSitemapXml(): string {
+  const urls = [sitemapPageBlock(""), sitemapPageBlock("sample/"), sitemapPageBlock("methodology/")].join(
+    "\n",
+  );
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
